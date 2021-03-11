@@ -4,11 +4,10 @@ from __future__ import print_function
 import argparse
 import sys
 
-import tensorflow as tf
-
 import NeuralNetwork as nn
-
-
+import tensorflow as tf
+from keras.preprocessing.image import ImageDataGenerator
+import numpy as np
 # a = tf.keras.datasets.mnist.load_data()
 
 def main(batch_size, epochs, gd_variant, learning_rate, optimizer, layers, layer_size, activation):
@@ -17,13 +16,13 @@ def main(batch_size, epochs, gd_variant, learning_rate, optimizer, layers, layer
 
     activations = {
         "sgm": nn.sgm,
-        "relu": nn.relu
+        "relu": nn.relu,
+        "tanh": nn.tanh
     }
 
     net = nn.NeuralNetwork(shape, activation=activations[activation])
 
     train, test = tf.keras.datasets.fashion_mnist.load_data()
-
     X_train, y_train = train
     y_train = y_train.reshape(60000, 1)
     assert (X_train.shape, y_train.shape) == ((60000, 28, 28),

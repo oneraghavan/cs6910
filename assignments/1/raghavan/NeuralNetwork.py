@@ -3,10 +3,11 @@ from __future__ import print_function
 
 import numpy as np
 from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score, log_loss
-
+from tensorflow.keras import initializers
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 def softmax(Z):
-    expZ = np.exp(Z - np.max(Z))
+    expZ = np.exp(Z - np.max(Z.T, axis=1))
     return expZ / expZ.sum(axis=0, keepdims=True)
 
 
@@ -18,20 +19,34 @@ def sgm(x, der=False):
         return simple * (1 - simple)
 
 
-@np.vectorize
 def relu(x, der=False):
-    if not der:
-        return np.maximum(0, x)
-    else:
-        if x <= 0:
-            return 0
+    x = np.divide(x, np.max(x.T, axis=1))
+
+    @np.vectorize
+    def relu1(x, der=False):
+        if not der:
+            return np.maximum(0, x)
         else:
-            return 1
+            if x <= 0:
+                return 0
+            else:
+                return 1
+
+    return relu1(x, der)
+
+
+# @np.vectorize
+def tanh(z, der=False):
+    # t = (np.exp(z) - np.exp(-z)) / (np.exp(z) + np.exp(-z))
+    t = np.tanh(z)
+    if der:
+        return 1 - t ** 2
+    return t
 
 
 class NeuralNetwork:
-    def __initialize_weights_and_biases(self):
-        self.weights = [np.random.randn(j, i) for i, j in zip(
+    def __initialize_weights_and_biases(self, xavier):
+        self.weights = [initializers.GlorotUniform()(shape=(j, i)).numpy() if xavier else np.random.randn(j, i) for i, j in zip(
             self.shape[:-1], self.shape[1:])]
         self.biases = [np.random.randn(i, 1) for i in self.shape[1:]]
 
@@ -49,10 +64,10 @@ class NeuralNetwork:
         self.dropout = [np.zeros((i, size))
                         for i in self.shape[1:]] if size else []
 
-    def __init__(self, shape, activation=sgm):
+    def __init__(self, shape, activation=sgm, xavier_initialization=True):
         self.shape = shape
         self.activation = activation
-        self.__initialize_weights_and_biases()
+        self.__initialize_weights_and_biases(xavier_initialization)
         self._initialize_activations_and_pre_activations()
 
     def vectorize_output(self):
@@ -76,12 +91,13 @@ class NeuralNetwork:
         for item, value in enumerate(zip(self.weights, self.biases), start=1):
             w, b = value
             result = np.dot(w, result) + b
+
             self.pre_activations.append(result)
             if item == len(self.weights):
                 result = result/np.max(result)
                 result = softmax(result)
-                # result = self.activation(result)
             else:
+                # result = result - np.max(result.T, axis=1)
                 result = self.activation(result)
             self.activations.append(result)
 
@@ -137,7 +153,7 @@ class NeuralNetwork:
 
         wandb.config.layers = len(self.shape) - 2
         wandb.config.layer_size = self.shape[-2]
-        wandb.config.activation = self.activation.__name__
+        # wandb.config.activation = self.activation.__name__
 
         self.batch_size = batch_size
         self.learning_rate = learning_rate
@@ -251,6 +267,9 @@ class VennilaOptimizer:
     def update_weights(self):
         self.model.weights = [w - (self.model.learning_rate / self.model.batch_size) * np.dot(d, a.T)
                               for w, d, a in zip(self.model.weights, self.model.deltas, self.model.activations)]
+        # print(self.model.weights[0][0],self.model.deltas[0])
+        # self.model.weights = [w - (self.model.learning_rate / self.model.batch_size) * np.dot(d, a.T) * (2 * 0.5) * w
+        #                       for w, d, a in zip(self.model.weights, self.model.deltas, self.model.activations)]
 
     def update_biases(self):
         self.model.biases = [
@@ -391,7 +410,6 @@ class RMSProp(VennilaOptimizer):
     def gradient_decent(self, batch_input, batch_target):
         self.model.feed_forward(batch_input)
 
-        
         self.model.compute_derivatives(batch_input, batch_target)
 
         self.update_weights()
@@ -438,7 +456,6 @@ class Adam(VennilaOptimizer):
     def gradient_decent(self, batch_input, batch_target):
         self.model.feed_forward(batch_input)
 
-        
         self.model.compute_derivatives(batch_input, batch_target)
 
         self.update_weights()
@@ -503,7 +520,6 @@ class NAdam(VennilaOptimizer):
     def gradient_decent(self, batch_input, batch_target):
         self.model.feed_forward(batch_input)
 
-        
         self.model.compute_derivatives(batch_input, batch_target)
 
         self.update_weights()
