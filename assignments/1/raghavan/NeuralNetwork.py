@@ -78,6 +78,7 @@ class NeuralNetwork:
             result = np.dot(w, result) + b
             self.pre_activations.append(result)
             if item == len(self.weights):
+                result = result/np.max(result)
                 result = softmax(result)
                 # result = self.activation(result)
             else:
