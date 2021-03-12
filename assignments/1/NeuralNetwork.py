@@ -456,7 +456,7 @@ class Adagrad(VennilaOptimizer):
 
     #
     def update_biases(self):
-        self.vb = [v + np.power(np.sum(d, axis=1), 2) for v, d in zip(self.vb, self.model.deltas)]
+        self.vb = [v + np.power(np.sum(d, axis=1).reshape(v.shape), 2) for v, d in zip(self.vb, self.model.deltas)]
 
         self.model.biases = [
             b - (self.model.learning_rate / (self.model.batch_size * np.sqrt(vb + self.eps))) * (
@@ -493,7 +493,7 @@ class RMSProp(VennilaOptimizer):
 
     #
     def update_biases(self):
-        self.vb = [(self.beta * v) + ((1 - self.beta) * np.power(np.sum(d, axis=1), 2)) for v, d in
+        self.vb = [(self.beta * v) + ((1 - self.beta) * np.power(np.sum(d, axis=1).reshape(v.shape), 2)) for v, d in
                    zip(self.vb, self.model.deltas)]
 
         self.model.biases = [
