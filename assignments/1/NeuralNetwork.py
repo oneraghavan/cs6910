@@ -2,9 +2,16 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score, log_loss
+import pandas as pd
+import seaborn as sns
+import wandb
+from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score, log_loss, confusion_matrix
 from tensorflow.keras import initializers
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+sns.set()
+import plotly.express as px
+import plotly.figure_factory as ff
+
 
 def softmax(Z):
     expZ = np.exp(Z - np.max(Z.T, axis=1))
@@ -46,8 +53,9 @@ def tanh(z, der=False):
 
 class NeuralNetwork:
     def __initialize_weights_and_biases(self, xavier):
-        self.weights = [initializers.GlorotUniform()(shape=(j, i)).numpy() if xavier else np.random.randn(j, i) for i, j in zip(
-            self.shape[:-1], self.shape[1:])]
+        self.weights = [initializers.GlorotUniform()(shape=(j, i)).numpy() if xavier else np.random.randn(j, i) for i, j
+                        in zip(
+                self.shape[:-1], self.shape[1:])]
         self.biases = [np.random.randn(i, 1) for i in self.shape[1:]]
 
     def _initialize_activations_and_pre_activations(self, size=None):
@@ -94,7 +102,6 @@ class NeuralNetwork:
 
             self.pre_activations.append(result)
             if item == len(self.weights):
-                result = result/np.max(result)
                 result = softmax(result)
             else:
                 # result = result - np.max(result.T, axis=1)
@@ -141,11 +148,11 @@ class NeuralNetwork:
         return log_loss(actuals, predicted.T)
 
     def train(self, train_data=None, train_labels=None, batch_size=100, epochs=20, learning_rate=.3, test_data=None,
-              test_labels=None, gd_variant='mini_batch', optimizer=None):
+              test_labels=None, valid_data=None, valid_labels=None, gd_variant='mini_batch', optimizer=None,
+              regularization=True, regularization_lambda=0.5):
 
-        import wandb
-
-        wandb.init(project="assignment1")
+        self.regularization = regularization
+        self.regularization_lambda = regularization_lambda
         wandb.config.batch_size = batch_size
         wandb.config.epochs = 20
         wandb.config.learning_rate = learning_rate
@@ -153,7 +160,8 @@ class NeuralNetwork:
 
         wandb.config.layers = len(self.shape) - 2
         wandb.config.layer_size = self.shape[-2]
-        # wandb.config.activation = self.activation.__name__
+
+        wandb.config.l2_regularization = regularization
 
         self.batch_size = batch_size
         self.learning_rate = learning_rate
@@ -182,9 +190,10 @@ class NeuralNetwork:
 
         self.test_data = test_data.T
         self.test_labels = test_labels.reshape((10000,))
-        self.testing_error = []
 
-        # number of total examples
+        self.valid_data = valid_data.T
+        self.valid_labels = valid_labels.reshape((10000,))
+
         self.number_of_examples = self.data.shape[1]
         diff = self.number_of_examples % batch_size
         # we discard the last examples for now
@@ -231,19 +240,72 @@ class NeuralNetwork:
 
             precision, recall, f1, accuracy = self.metrics(
                 self.feed_forward(
-                    self.test_data, return_labels=True),
-                self.test_labels
+                    self.valid_data, return_labels=True),
+                self.valid_labels
             )
 
             loss = self.cost(
-                self.feed_forward(self.test_data),
-                self.test_labels
+                self.feed_forward(self.valid_data),
+                self.valid_labels
             )
-            wandb.log({'epoch': epoch, 'test_loss': loss, 'test_precision': precision, 'test_recall': recall,
-                       'test_f1': f1, 'test_accuracy': accuracy})
+            wandb.log({'epoch': epoch, 'valid_loss': loss, 'valid_precision': precision, 'valid_recall': recall,
+                       'valid_f1': f1, 'valid_accuracy': accuracy})
 
             print(f"Test : loss {loss} precision {precision} , recall {recall} F1 Score {f1} accuracy {accuracy}")
             print()
+
+        predictions = self.feed_forward(
+            self.test_data, return_labels=True)
+
+        frame = pd.DataFrame(confusion_matrix(test_labels, predictions))
+
+        precision, recall, f1, accuracy = self.metrics(
+            self.feed_forward(
+                self.test_data, return_labels=True),
+            self.test_labels
+        )
+
+        loss = self.cost(
+            self.feed_forward(self.test_data),
+            self.test_labels
+        )
+        wandb.log({'test_loss': loss, 'test_precision': precision, 'test_recall': recall,
+                   'test_f1': f1, 'test_accuracy': accuracy})
+
+        self.plot_confusion_matrixes(frame)
+
+    def l2_regularization(self, w):
+        if self.regularization:
+            return self.learning_rate * self.regularization_lambda * w / self.batch_size
+        else:
+            return 0
+
+    def plot_confusion_matrixes(self, plotdata):
+        labels = ["T-shirt/top", "Trouser", "Pullover", "Dress", "Coat", "Sandal", "Shirt", "Sneaker", "Bag",
+                  "Ankle boot"]
+        confusions = plotdata.values
+        plotdata.index = labels
+
+        plotdata.columns = labels
+        plotdata['Actual'] = labels
+
+        fig = px.bar(plotdata, x="Actual", y=labels, title="Confusion matrix", labels={'value': "Predicted"})
+        wandb.log({'confusion_stacked_bar': fig})
+        del plotdata["Actual"]
+
+        np.fill_diagonal(confusions, 0)
+        plotdata = pd.DataFrame(confusions)
+        plotdata.index = labels
+
+        plotdata.columns = labels
+        plotdata['Actual'] = labels
+
+        fig = px.bar(plotdata, x="Actual", y=labels, title="Confusion matrix", labels={'value': "Predicted"})
+        wandb.log({'mistakes_stacked_bar': fig})
+
+        del plotdata["Actual"]
+        fig = ff.create_annotated_heatmap(plotdata.values, x=labels, y=labels)
+        wandb.log({'standard_confusion_matrix': fig})
 
     def validate_data(self):
         assert self.data.shape[0] == self.shape[0], \
@@ -265,8 +327,9 @@ class VennilaOptimizer:
         self.model = model
 
     def update_weights(self):
-        self.model.weights = [w - (self.model.learning_rate / self.model.batch_size) * np.dot(d, a.T)
-                              for w, d, a in zip(self.model.weights, self.model.deltas, self.model.activations)]
+        self.model.weights = [
+            w - ((self.model.learning_rate / self.model.batch_size) * np.dot(d, a.T)) - self.model.l2_regularization(w)
+            for w, d, a in zip(self.model.weights, self.model.deltas, self.model.activations)]
         # print(self.model.weights[0][0],self.model.deltas[0])
         # self.model.weights = [w - (self.model.learning_rate / self.model.batch_size) * np.dot(d, a.T) * (2 * 0.5) * w
         #                       for w, d, a in zip(self.model.weights, self.model.deltas, self.model.activations)]
@@ -307,7 +370,8 @@ class Momentum(VennilaOptimizer):
                           for d, pd, a in
                           zip(self.model.deltas, self.prev_weight_updates, self.model.activations)]
         self.prev_weight_updates = current_update
-        self.model.weights = [w - update for w, update in zip(self.model.weights, current_update)]
+        self.model.weights = [w - update - self.model.l2_regularization(w) for w, update in
+                              zip(self.model.weights, current_update)]
 
     def update_biases(self):
         current_update = [
@@ -334,7 +398,7 @@ class NesterovAccelarated(VennilaOptimizer):
     def gradient_decent(self, batch_input, batch_target):
         self.old_weights = self.model.weights
         self.old_biases = self.model.biases
-        self.model.weights = [w - self.gamma * update for w, update in
+        self.model.weights = [w - self.gamma * update - self.model.l2_regularization(w) for w, update in
                               zip(self.model.weights, self.prev_weight_updates)]
         self.model.feed_forward(batch_input)
 
@@ -349,8 +413,9 @@ class NesterovAccelarated(VennilaOptimizer):
             for d, pd, a in
             zip(self.model.deltas, self.prev_weight_updates, self.model.activations)]
 
-        self.model.weights = [w - (self.model.learning_rate / self.model.batch_size) * np.dot(d, a.T)
-                              for w, d, a in zip(self.old_weights, self.model.deltas, self.model.activations)]
+        self.model.weights = [
+            w - (self.model.learning_rate / self.model.batch_size) * np.dot(d, a.T) - self.model.l2_regularization(w)
+            for w, d, a in zip(self.old_weights, self.model.deltas, self.model.activations)]
 
     def update_biases(self):
         self.prev_bias_updates = [
@@ -384,7 +449,9 @@ class Adagrad(VennilaOptimizer):
         self.vw = [v + np.power(np.dot(d, a.T), 2) for v, d, a in
                    zip(self.vw, self.model.deltas, self.model.activations)]
         self.model.weights = [
-            w - (self.model.learning_rate / (self.model.batch_size * np.sqrt(vw + self.eps))) * np.dot(d, a.T)
+            w - (self.model.learning_rate / (self.model.batch_size * np.sqrt(vw + self.eps))) * np.dot(d,
+                                                                                                       a.T) - self.model.l2_regularization(
+                w)
             for w, d, a, vw in zip(self.model.weights, self.model.deltas, self.model.activations, self.vw)]
 
     #
@@ -419,7 +486,9 @@ class RMSProp(VennilaOptimizer):
         self.vw = [(self.beta * v) + ((1 - self.beta) * np.power(np.dot(d, a.T), 2)) for v, d, a in
                    zip(self.vw, self.model.deltas, self.model.activations)]
         self.model.weights = [
-            w - (self.model.learning_rate / (self.model.batch_size * np.sqrt(vw + self.eps))) * np.dot(d, a.T)
+            w - (self.model.learning_rate / (self.model.batch_size * np.sqrt(vw + self.eps))) * np.dot(d,
+                                                                                                       a.T) - self.model.l2_regularization(
+                w)
             for w, d, a, vw in zip(self.model.weights, self.model.deltas, self.model.activations, self.vw)]
 
     #
@@ -475,7 +544,8 @@ class Adam(VennilaOptimizer):
         self.vw_hat = [np.divide(vw, (1 - self.acc_beta1)) for vw in self.vw]
 
         self.model.weights = [
-            w - (self.model.learning_rate / (self.model.batch_size * np.sqrt(vw + self.eps))) * mw
+            w - (self.model.learning_rate / (
+                        self.model.batch_size * np.sqrt(vw + self.eps))) * mw - self.model.l2_regularization(w)
             for w, vw, mw in zip(self.model.weights, self.vw_hat, self.mw_hat)]
 
     #
@@ -540,7 +610,8 @@ class NAdam(VennilaOptimizer):
 
         self.model.weights = [
             w - (self.model.learning_rate / (self.model.batch_size * np.sqrt(vw + self.eps))) * (
-                    self.beta1 * mw + (1 - self.beta1) * np.dot(d, a.T) / (1 - self.acc_beta1))
+                    self.beta1 * mw + (1 - self.beta1) * np.dot(d, a.T) / (
+                        1 - self.acc_beta1)) - self.model.l2_regularization(w)
             for w, vw, mw, d, a in
             zip(self.model.weights, self.vw_hat, self.mw_hat, self.model.deltas, self.model.activations)]
 
