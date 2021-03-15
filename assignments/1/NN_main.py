@@ -13,7 +13,7 @@ from sklearn.model_selection import train_test_split
 
 # a = tf.keras.datasets.mnist.load_data()
 
-def main(batch_size, epochs, gd_variant, learning_rate, optimizer, layers, layer_size, activation,regularization):
+def main(batch_size, epochs, gd_variant, learning_rate, optimizer, layers, layer_size, activation, regularization):
     # shape = [784, 500, 100, 50, 30, 10]
     shape = [784] + list(range(layers * layer_size, layer_size - 1, -1 * layer_size)) + [10]
     regularization = regularization == "True"
@@ -23,7 +23,12 @@ def main(batch_size, epochs, gd_variant, learning_rate, optimizer, layers, layer
         "tanh": nn.tanh
     }
 
-    wandb.init(project="assignment1")
+    reg_tag = "reg" if regularization else "no_reg"
+
+    name = "bs:" + str(batch_size) + "_epoch:" + str(epochs) + "_gd:" + str(gd_variant) + "_lr:" + str(learning_rate) + "_opt:" + str(
+        optimizer) + "_num_lay:" + str(layers) + "_lay_size:" + str(layer_size) + "_act:" + str(
+        activation) + "_" + reg_tag
+    wandb.init(project="assignment1", name=name)
 
     net = nn.NeuralNetwork(shape, activation=activations[activation])
 
@@ -56,7 +61,7 @@ def main(batch_size, epochs, gd_variant, learning_rate, optimizer, layers, layer
                                             (10000, 1)), "Test images were loaded incorrectly"
     X_test = X_test.reshape(10000, 784)
 
-    (X_train, X_valid, y_train, y_valid) = train_test_split(X_train, y_train, stratify=y_train,test_size=10000)
+    (X_train, X_valid, y_train, y_valid) = train_test_split(X_train, y_train, stratify=y_train, test_size=10000)
 
     optimizers = {
         "Adam": nn.Adam(net),
@@ -104,4 +109,4 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     main(int(args.batch_size), int(args.epochs), args.gd_variant, float(args.learning_rate), args.optimizer,
-         int(args.layers), int(args.layer_size), args.activation,args.regularization)
+         int(args.layers), int(args.layer_size), args.activation, args.regularization)
