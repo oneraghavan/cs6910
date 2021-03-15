@@ -24,3 +24,4 @@ Run with following parameters :
 
 
 
+Parallel Work by other student : https://github.com/SandhyaBaskaran/assignment0_FNN
