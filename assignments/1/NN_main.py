@@ -105,7 +105,6 @@ if __name__ == '__main__':
     parser.add_argument('--layer_size')
     parser.add_argument('--activation')
     parser.add_argument('--regularization')
-    parser.set_defaults(feature=False)
 
     args = parser.parse_args()
     main(int(args.batch_size), int(args.epochs), args.gd_variant, float(args.learning_rate), args.optimizer,

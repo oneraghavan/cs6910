@@ -104,7 +104,6 @@ class NeuralNetwork:
             if item == len(self.weights):
                 result = softmax(result)
             else:
-                # result = result - np.max(result.T, axis=1)
                 result = self.activation(result)
             self.activations.append(result)
 
