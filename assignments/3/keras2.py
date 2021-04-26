@@ -4,7 +4,7 @@ from tensorflow import keras
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 import argparse
 
-from tensorflow.keras.layers import LSTM, Input, Dense, Embedding, GRU, SimpleRNN
+from tensorflow.keras.layers import LSTM, Input, Dense, Embedding, GRU, SimpleRNN , Dropout
 from tensorflow.keras import Model
 import wandb
 
@@ -18,7 +18,7 @@ def get_mid_k_items(k, list):
     return list[strt_idx: end_idx + 1]
 
 
-def get_model(encoder_layers, decoder_layers, encoder_inputs, decoder_inputs, cell_type):
+def get_model(encoder_layers, decoder_layers, encoder_inputs, decoder_inputs, cell_type,dropout):
     encoder_latent_dims = np.full(encoder_layers, hidden_size)
     decoder_latent_dims = np.full(decoder_layers, hidden_size)
 
@@ -31,10 +31,10 @@ def get_model(encoder_layers, decoder_layers, encoder_inputs, decoder_inputs, ce
         cell = GRU
     for j in range(len(encoder_latent_dims))[::-1]:
         if cell_type == 'lstm':
-            outputs, h, c = cell(hidden_size, return_state=True, return_sequences=bool(j))(outputs)
+            outputs, h, c = cell(hidden_size, return_state=True, return_sequences=bool(j),recurrent_dropout=dropout)(outputs)
             encoder_states += [(h, c)]
         else:
-            outputs, hidden = cell(hidden_size, return_state=True, return_sequences=bool(j))(outputs)
+            outputs, hidden = cell(hidden_size, return_state=True, return_sequences=bool(j),recurrent_dropout=dropout)(outputs)
             encoder_states += [hidden]
             # Set up the decoder, setting the initial state of each layer to the state of the layer in the encoder
     # which is it's mirror (so for encoder: a->b->c, you'd have decoder initial states: c->b->a).
@@ -43,15 +43,17 @@ def get_model(encoder_layers, decoder_layers, encoder_inputs, decoder_inputs, ce
     output_layers = []
     for j in range(len(decoder_latent_dims)):
         output_layers.append(
-            cell(hidden_size, return_sequences=True, return_state=True)
+            cell(hidden_size, return_sequences=True, return_state=True,recurrent_dropout=dropout)
         )
         if cell_type == 'lstm':
             outputs, dh, dc = output_layers[-1](outputs, initial_state=manipulated_encoder_states[j])
         else:
             outputs, hidden = output_layers[-1](outputs, initial_state=manipulated_encoder_states[j])
         # outputs, dh, dc = output_layers[-1](outputs, initial_state=encoder_states[j])
+
+    dropout_layer = Dropout(dropout)
     decoder_dense = Dense(num_decoder_tokens, activation='softmax')
-    decoder_outputs = decoder_dense(outputs)
+    decoder_outputs = decoder_dense(dropout_layer(outputs))
     # Define the model that will turn
     # `encoder_input_data` & `decoder_input_data` into `decoder_target_data`
     model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
@@ -147,7 +149,7 @@ if __name__ == '__main__':
     parser.add_argument('--cell_type', )
     parser.add_argument('--dropout')
     parser.add_argument('--beam_search')
-    parser.add_argument('--learning_rate')
+    # parser.add_argument('--learning_rate')
 
     args = parser.parse_args()
     hidden_size = int(args.hidden_size)
@@ -156,14 +158,14 @@ if __name__ == '__main__':
     cell_type = args.cell_type
     encoder_layers = int(args.encoder_layers)
     decoder_layers = int(args.decoder_layers)
-    learning_rate = float(args.learning_rate)
-    beam_search = args.beam_search == "True"
+    # learning_rate = float(args.learning_rate)
+    # beam_search = args.beam_search
     # hidden_size = embedding_size
     # beam_search = True
     # learning_rate = 0.001
     name = "hs:" + str(hidden_size) + "_dropout:" + str(dropout) + "_embedding_size:" + str(
         embedding_size) + "_cell_type:" + str(cell_type) + "_encoder_layers:" + str(
-        encoder_layers) + "_decoder_layers:" + str(decoder_layers) + "_beam_search:" + str(beam_search)
+        encoder_layers) + "_decoder_layers:" + str(decoder_layers)
     wandb.init(project="assignment-3", name=name)
 
     wandb.config.hidden_size = hidden_size
@@ -172,13 +174,13 @@ if __name__ == '__main__':
     wandb.config.cell_type = cell_type
     wandb.config.encoder_layers = encoder_layers
     wandb.config.decoder_layers = decoder_layers
-    wandb.config.beam_search = beam_search
-    wandb.config.learning_rate = learning_rate
+    # wandb.config.beam_search = beam_search
+    # wandb.config.learning_rate = learning_rate
 
     callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3)
     from wandb.keras import WandbCallback
 
-    batch_size = 512  # Batch size for training.
+    batch_size = 16  # Batch size for training.
     epochs = 100  # Number of epochs to train for.
 
     data_path = "/data/dakshina/dakshina_dataset_v1.0/ta/lexicons/ta.translit.sampled.train.tsv"
@@ -209,7 +211,7 @@ if __name__ == '__main__':
 
     decoder_dense, decoder_outputs, output_layers, encoder_states, model = get_model(encoder_layers, decoder_layers,
                                                                                      encoder_inputs,
-                                                                                     decoder_inputs, cell_type)
+                                                                                     decoder_inputs, cell_type,dropout)
 
     model.compile(
         optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
