@@ -4,10 +4,11 @@ from tensorflow import keras
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 import argparse
 
-from tensorflow.keras.layers import LSTM, Input, Dense, Embedding, GRU, SimpleRNN , Dropout
+from tensorflow.keras.layers import LSTM, Input, Dense, Embedding, GRU, SimpleRNN, Dropout, Concatenate
 from tensorflow.keras import Model
 import wandb
-
+from keras.optimizers import Adam
+from attention import AttentionLayer
 
 # In[7]:
 def get_mid_k_items(k, list):
@@ -18,7 +19,7 @@ def get_mid_k_items(k, list):
     return list[strt_idx: end_idx + 1]
 
 
-def get_model(encoder_layers, decoder_layers, encoder_inputs, decoder_inputs, cell_type,dropout):
+def get_model(encoder_layers, decoder_layers, encoder_inputs, decoder_inputs, cell_type, dropout):
     encoder_latent_dims = np.full(encoder_layers, hidden_size)
     decoder_latent_dims = np.full(decoder_layers, hidden_size)
 
@@ -56,6 +57,60 @@ def get_model(encoder_layers, decoder_layers, encoder_inputs, decoder_inputs, ce
     decoder_outputs = decoder_dense(dropout_layer(outputs))
     # Define the model that will turn
     # `encoder_input_data` & `decoder_input_data` into `decoder_target_data`
+    model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+
+    return decoder_dense, decoder_outputs, output_layers, encoder_states, model
+
+
+def get_attention_model(encoder_layers, decoder_layers, encoder_inputs, decoder_inputs, cell_type, dropout):
+    encoder_latent_dims = np.full(encoder_layers, hidden_size)
+    decoder_latent_dims = np.full(decoder_layers, hidden_size)
+
+    outputs = Embedding(num_encoder_tokens, embedding_size)(encoder_inputs)
+    encoder_states = []
+    cell = SimpleRNN
+    if cell_type == 'lstm':
+        cell = LSTM
+    elif cell_type == 'gru':
+        cell = GRU
+    for j in range(len(encoder_latent_dims))[::-1]:
+        if cell_type == 'lstm':
+            outputs, h, c = cell(hidden_size, return_state=True, return_sequences=True, recurrent_dropout=dropout)(
+                outputs)
+            encoder_states += [(h, c)]
+        else:
+            outputs, hidden = cell(hidden_size, return_state=True, return_sequences=True, recurrent_dropout=dropout)(
+                outputs)
+            encoder_states += [hidden]
+            # Set up the decoder, setting the initial state of each layer to the state of the layer in the encoder
+    # which is it's mirror (so for encoder: a->b->c, you'd have decoder initial states: c->b->a).
+    encoder_out = outputs
+    manipulated_encoder_states = manipulate_layered(decoder_layers, encoder_layers, encoder_states)
+    outputs = decoder_inputs
+    output_layers = []
+    for j in range(len(decoder_latent_dims)):
+        output_layers.append(
+            cell(hidden_size, return_sequences=True, return_state=True, recurrent_dropout=dropout)
+        )
+        if cell_type == 'lstm':
+            outputs, dh, dc = output_layers[-1](outputs, initial_state=manipulated_encoder_states[j])
+        else:
+            outputs, hidden = output_layers[-1](outputs, initial_state=manipulated_encoder_states[j])
+        # outputs, dh, dc = output_layers[-1](outputs, initial_state=encoder_states[j])
+
+
+    attn_layer = AttentionLayer(name='attention_layer')
+    attn_out, attn_states = attn_layer([encoder_out, outputs])
+
+    # Concat attention input and decoder GRU output
+    decoder_concat_input = Concatenate(axis=-1, name='concat_layer')([outputs, attn_out])
+
+    dropout_layer = Dropout(dropout)
+    decoder_dense = Dense(num_decoder_tokens, activation='softmax')
+    decoder_outputs = decoder_dense(dropout_layer(decoder_concat_input))
+    # Define the model that will turn
+    # `encoder_input_data` & `decoder_input_data` into `decoder_target_data`
+
     model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
 
     return decoder_dense, decoder_outputs, output_layers, encoder_states, model
@@ -209,7 +264,7 @@ if __name__ == '__main__':
     encoder_inputs = Input(shape=(None,))
     decoder_inputs = Input(shape=(None, num_decoder_tokens))
 
-    decoder_dense, decoder_outputs, output_layers, encoder_states, model = get_model(encoder_layers, decoder_layers,
+    decoder_dense, decoder_outputs, output_layers, encoder_states, model = get_attention_model(encoder_layers, decoder_layers,
                                                                                      encoder_inputs,
                                                                                      decoder_inputs, cell_type,dropout)
 
